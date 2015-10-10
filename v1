@@ -1,0 +1,201 @@
+/* GrowController
+ * Work In Process
+ */
+
+#include <LiquidCrystal.h>
+#include "DHT.h"
+#include <SD.h>
+#include <Wire.h>
+#include "RTClib.h"
+#include <SPI.h>
+
+#define DHTPIN 2     //Pin for dht22
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);  //Pins for the LCD display
+
+#define DHTTYPE DHT22   // DHT 22  (AM2302)
+
+// Connect pin 1 (on the left) of the sensor to +5V
+// Connect pin 2 of the sensor to whatever your DHTPIN is
+// Connect pin 4 (on the right) of the sensor to GROUND
+// Connect a 10K resistor from pin 2 (data) to pin 1 (power) of the sensor
+
+// A simple data logger for the Arduino analog pins
+#define LOG_INTERVAL  3000 // mills between entries
+#define SYNC_INTERVAL 30000 // writes every 10 datareads - set to LOG_INTERVAL for safest
+uint32_t syncTime = 0; // time of last sync()
+#define ECHO_TO_SERIAL   1 // echo data to serial port
+#define WAIT_TO_START    0 // Wait for serial input in setup()
+
+RTC_DS1307 RTC; // define the Real Time Clock object
+
+// for the data logging shield, we use digital pin 10 for the SD cs line
+const int chipSelect = 3; //switched from 10 to 3 - pin 10 used by LCDKeypadShield
+
+// the logging file
+File logfile;
+
+void error(char *str)
+{
+  Serial.print("error: ");
+  Serial.println(str);
+  while(1);
+}
+
+DHT dht(DHTPIN, DHTTYPE); // define Temp and Humid sensor
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println();
+  dht.begin();
+  lcd.begin(16, 2);
+
+  // initialize the SD card
+  Serial.print("Initializing SD card...");
+  // make sure that the default chip select pin is set to
+  // output, even if you don't use it:
+  pinMode(3, OUTPUT);
+  
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    error("Card failed, or not present");
+    Serial.println("Card failed, or not present");
+  }
+  Serial.println("card initialized.");
+  
+  // create a new file
+  char filename[] = "LOGGER00.CSV";
+  for (uint8_t i = 0; i < 100; i++) {
+    filename[6] = i/10 + '0';
+    filename[7] = i%10 + '0';
+    if (! SD.exists(filename)) {
+      // only open a new file if it doesn't exist
+      logfile = SD.open(filename, FILE_WRITE); 
+      break;  // leave the loop!
+    }
+  }
+  
+  if (! logfile) {
+    error("couldnt create file");
+  }
+  
+  Serial.print("Logging to: ");
+  Serial.println(filename);
+  
+  // connect to RTC 
+  Wire.begin();
+   if (!RTC.begin()) {
+    logfile.println("RTC failed");
+#if ECHO_TO_SERIAL
+    Serial.println("RTC failed");
+#endif  //ECHO_TO_SERIAL
+  }
+  
+
+  logfile.println("millis,time,humidity,temp");    
+#if ECHO_TO_SERIAL
+  Serial.println("millis,time,humidity,temp");
+#endif
+}
+
+void loop() {
+  DateTime now;
+  // Reading temperature or humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  t = t * 9 / 5 + 32; // convert to farenheight
+
+  // display data to LCD
+  // check if returns are valid, if they are NaN (not a number) then something went wrong!
+  if (isnan(t) || isnan(h)) {
+    lcd.clear();
+    lcd.setCursor(1, 0);
+    lcd.print("Failed to read");
+    lcd.setCursor(4, 1);
+    lcd.print("from DHT");
+    Serial.println("Failed to read from DHT");
+  } 
+  else {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Humidity: ");
+    lcd.print(h);
+    lcd.print("%");
+    lcd.setCursor(0, 1);
+    lcd.print("Temp: ");
+    lcd.print(t);
+    lcd.print("F");
+    Serial.print("Humidity: ");
+    Serial.print(h);
+    Serial.print(" %\t");
+    Serial.print("Temperature: ");
+    Serial.print(t);
+    Serial.println(" *F");
+  }
+
+  // delay for the amount of time we want between readings
+  delay((LOG_INTERVAL -1) - (millis() % LOG_INTERVAL));
+  
+  // log milliseconds since starting
+  uint32_t m = millis();
+  logfile.print(m); // milliseconds since start
+  logfile.print(", ");    
+#if ECHO_TO_SERIAL
+  Serial.print(m); // milliseconds since start
+  Serial.print(", ");  
+#endif
+
+  // fetch the time
+  now = RTC.now();
+  // log time
+  logfile.print(now.unixtime()); // seconds since 1/1/1970
+  logfile.print(", ");
+  logfile.print(now.year(), DEC);
+  logfile.print("/");
+  logfile.print(now.month(), DEC);
+  logfile.print("/");
+  logfile.print(now.day(), DEC);
+  logfile.print(" ");
+  logfile.print(now.hour(), DEC);
+  logfile.print(":");
+  logfile.print(now.minute(), DEC);
+  logfile.print(":");
+  logfile.print(now.second(), DEC);
+#if ECHO_TO_SERIAL
+  Serial.print(now.unixtime()); // seconds since 1/1/1970
+  Serial.print(", ");
+  Serial.print(now.year(), DEC);
+  Serial.print("/");
+  Serial.print(now.month(), DEC);
+  Serial.print("/");
+  Serial.print(now.day(), DEC);
+  Serial.print(" ");
+  Serial.print(now.hour(), DEC);
+  Serial.print(":");
+  Serial.print(now.minute(), DEC);
+  Serial.print(":");
+  Serial.print(now.second(), DEC);
+#endif //ECHO_TO_SERIAL
+  // log humidity and temperature
+  logfile.print(", ");
+  logfile.print(h);
+  logfile.print(", ");
+  logfile.print(t);
+#if ECHO_TO_SERIAL
+  Serial.print(", ");   
+  Serial.print(h);
+  Serial.print(", ");    
+  Serial.print(t);
+#endif //ECHO_TO_SERIAL
+
+ logfile.println();
+#if ECHO_TO_SERIAL
+  Serial.println();
+#endif
+
+  // Now we write data to disk! Don't sync too often - requires 2048 bytes of I/O to SD card
+  // which uses a bunch of power and takes time
+  if ((millis() - syncTime) < SYNC_INTERVAL) return;
+  syncTime = millis();
+
+}
